@@ -1,28 +1,939 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Shiny App</title>
-    <script
-      src="./shinylive/load-shinylive-sw.js"
-      type="module"
-    ></script>
-    <script type="module">
-      import { runExportedApp } from "./shinylive/shinylive.js";
-      runExportedApp({
-        id: "root",
-        appEngine: "r",
-        relPath: "",
-      });
-    </script>
-    <link rel="stylesheet" href="./shinylive/style-resets.css" />
-    <link rel="stylesheet" href="./shinylive/shinylive.css" />
-    
-  </head>
-  <body>
-    
-    <div style="height: 100vh; width: 100vw" id="root"></div>
-    
-  </body>
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Herbarium Species Mapper</title>
+
+<script type="importmap">
+{
+  "imports": {
+    "apache-arrow": "https://cdn.jsdelivr.net/npm/apache-arrow@17/+esm"
+  }
+}
+</script>
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+
+<style>
+  :root{
+    --bg:#f6f7f8; --panel:#ffffff; --ink:#1f2328; --muted:#8b949e;
+    --line:#e3e6ea; --accent:#c0392b;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;margin:0}
+  body{
+    font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+    color:var(--ink); background:var(--bg); font-size:14px;
+  }
+  #app{display:flex; height:100vh; overflow:hidden}
+
+  #tree-panel{
+    width:34%; min-width:340px; max-width:720px;
+    display:flex; flex-direction:column;
+    background:var(--panel); border-right:1px solid var(--line);
+  }
+  #tree-header{padding:10px 12px 8px; border-bottom:1px solid var(--line)}
+  .title-row{display:flex; align-items:center; justify-content:space-between; gap:8px; flex-wrap:wrap}
+  .title-row h1{font-size:14px; margin:0; font-weight:650}
+  .header-actions{display:flex; gap:5px}
+  .btn{
+    font:inherit; font-size:11.5px; padding:3px 8px; border:1px solid var(--line);
+    background:#fff; border-radius:6px; cursor:pointer; color:var(--ink);
+    white-space:nowrap;
+  }
+  .btn:hover{background:#f0f2f4}
+
+  #search{
+    width:100%; margin-top:8px; padding:6px 10px; font:inherit; font-size:12.5px;
+    border:1px solid var(--line); border-radius:6px; outline:none;
+  }
+  #search:focus{border-color:#9ecbff; box-shadow:0 0 0 3px rgba(80,160,255,.15)}
+
+  .hint{font-size:11px; color:var(--muted); margin-top:6px; line-height:1.35}
+  #tree-scroll{flex:1; overflow:auto; overflow-x:hidden}
+  #tree-svg{display:block}
+  #status{
+    padding:8px 12px; border-top:1px solid var(--line);
+    font-size:11.5px; color:var(--muted); background:#fbfbfc; min-height:34px;
+    line-height:1.4;
+  }
+  #status b{color:var(--ink)}
+  #status .err{color:#c0392b}
+  #status .note{color:#8b949e; font-style:italic}
+  #status code{background:#f2f3f4; padding:1px 4px; border-radius:3px; font-size:11px}
+
+  .tip-label{font-size:11px; user-select:none}
+
+  #map-panel{flex:1; position:relative}
+  #map{position:absolute; inset:0}
+
+  .map-filter-btn{
+    position:absolute; top:12px; right:12px; z-index:1000;
+    font:inherit; font-size:12px; padding:6px 12px;
+    border:1px solid var(--line); background:var(--panel);
+    border-radius:6px; cursor:pointer;
+    box-shadow:0 2px 8px rgba(0,0,0,.12);
+    white-space:nowrap;
+  }
+  .map-filter-btn:hover{background:#f0f2f4}
+  .map-filter-btn.active{background:var(--accent); color:#fff; border-color:var(--accent)}
+  .map-filter-btn.active:hover{background:#a83225}
+  .map-filter-btn:disabled{opacity:.45; cursor:not-allowed}
+
+  .leaflet-popup-content{margin:12px 14px; font-size:12.5px; line-height:1.45; width:260px !important}
+  .leaflet-popup-content-wrapper{border-radius:9px}
+  .pop-title{font-style:italic; font-weight:700; font-size:13.5px; line-height:1.25}
+  .pop-accepted{color:var(--muted); font-size:11.5px; font-style:italic; margin-top:1px}
+  .pop-rows{margin-top:8px; display:grid; gap:2px}
+  .pop-row{display:flex; gap:8px}
+  .pop-key{color:var(--muted); min-width:78px; flex:none}
+  .pop-img-slot{margin-top:9px}
+  .pop-img-slot img{
+    width:100%; max-height:220px; object-fit:contain; display:block;
+    border-radius:6px; background:#f2f3f4;
+  }
+  .pop-img-none{font-size:11.5px; color:var(--muted); font-style:italic}
+  .pop-link{display:inline-block; margin-top:9px; font-size:12px; color:#0b6bcb; text-decoration:none}
+  .pop-link:hover{text-decoration:underline}
+
+  .hover-tip{
+    background:rgba(31,35,40,.93); color:#fff; border:none; box-shadow:none;
+    font-size:11.5px; font-style:italic; padding:3px 7px; border-radius:4px;
+  }
+  .hover-tip::before{display:none}
+
+  .overlay{
+    position:fixed; inset:0; background:rgba(20,24,28,.45);
+    display:flex; align-items:center; justify-content:center; z-index:9999;
+  }
+  .overlay[hidden]{display:none}
+  .overlay-card{
+    background:#fff; padding:22px 24px; border-radius:12px; max-width:520px;
+    box-shadow:0 12px 40px rgba(0,0,0,.25); font-size:13px; line-height:1.5;
+  }
+  .overlay-card h2{margin:0 0 8px; font-size:15px}
+  .overlay-card p{margin:0 0 14px; color:#57606a}
+  .overlay-card code{background:#f2f3f4; padding:1px 5px; border-radius:4px; font-size:12px}
+  .overlay-card input[type=file]{font:inherit; font-size:12.5px; display:block; margin-bottom:12px}
+  .overlay-card .row{display:flex; gap:8px; justify-content:flex-end}
+</style>
+</head>
+
+<body>
+<div id="app">
+  <aside id="tree-panel">
+    <header id="tree-header">
+      <div class="title-row">
+        <h1>Erigeron Species Mapper</h1>
+        <div class="header-actions">
+          <button id="btn-file" class="btn" type="button">Load file…</button>
+          <button id="btn-clear" class="btn" type="button">Clear</button>
+        </div>
+      </div>
+      <input id="search" type="search" placeholder="Search species…" autocomplete="off" />
+      <div class="hint">Click a tip or node to toggle selection · multiple selections combine · selected species appear bold and in colour</div>
+    </header>
+    <div id="tree-scroll">
+      <svg id="tree-svg" xmlns="http://www.w3.org/2000/svg"></svg>
+    </div>
+    <footer id="status">Starting…</footer>
+  </aside>
+
+  <main id="map-panel">
+    <div id="map"></div>
+    <button id="btn-image-filter" class="map-filter-btn" type="button">Imaged specimens only</button>
+  </main>
+</div>
+
+<div id="overlay" class="overlay" hidden>
+  <div class="overlay-card">
+    <h2 id="overlay-title">Select your Parquet file</h2>
+    <p id="overlay-msg"></p>
+    <input type="file" id="parquet-file" accept=".parquet" />
+    <div class="row">
+      <button id="overlay-skip" class="btn" type="button">Skip (explore tree only)</button>
+    </div>
+  </div>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/d3@7"></script>
+
+<script type="module">
+/* =====================================================================
+   CONFIG
+   ===================================================================== */
+const PARQUET_URL = './gbif_erigeron_acceptedNames.parquet';
+const NEWICK_URL  = './erigeron_ingroup_all_phylo_2026-10-07.tree';
+const TABLE       = 'occ.parquet';
+const DUCKDB_VERSIONS = ['1.28.0', '1.27.0'];
+const LADDERIZE_DESCENDING = false;
+
+const DEMO_NEWICK =
+  "(((((Panthera_leo:0.05,Panthera_onca:0.05):0.02,Panthera_tigris:0.06):0.03,Panthera_pardus:0.07):0.05," +
+  "(Lynx_lynx:0.08,Lynx_rufus:0.07):0.06):0.10,((Canis_lupus:0.06,Canis_latrans:0.05):0.04," +
+  "(Vulpes_vulpes:0.07,Vulpes_zerda:0.06):0.05):0.09,((Ursus_arctos:0.05,Ursus_americanus:0.04):0.03," +
+  "(Ailuropoda_melanoleuca:0.06,Tremarctos_ornatus:0.05):0.04):0.08);";
+
+/* =====================================================================
+   HELPERS
+   ===================================================================== */
+const $ = id => document.getElementById(id);
+const esc = s => String(s ?? '').replace(/[&<>"']/g,
+  c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const norm = s => String(s ?? '').toLowerCase().replace(/_/g, ' ').replace(/\s+/g, ' ').trim();
+const debounce = (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; };
+const setStatus = html => { $('status').innerHTML = html; };
+
+function normalizeRow(obj) {
+  const o = (typeof obj.toJSON === 'function') ? obj.toJSON() : { ...obj };
+  const out = {};
+  for (const k in o) {
+    const v = o[k];
+    out[k.toLowerCase()] = (typeof v === 'bigint') ? Number(v) : v;
+  }
+  return out;
+}
+
+/* ---- species colours ---- */
+const speciesColorMap = new Map();
+function assignSpeciesColors() {
+  speciesColorMap.clear();
+  const keys = new Set();
+  (function walk(n) {
+    if (!n.children.length) { if (n._key) keys.add(n._key); }
+    else n.children.forEach(walk);
+  })(treeRoot);
+  const sorted = [...keys].sort();
+  sorted.forEach((k, i) => {
+    const h = (i * 137.508) % 360;
+    const s = 58 + (i % 3) * 8;
+    const l = 38 + (i % 2) * 8;
+    speciesColorMap.set(k, `hsl(${h.toFixed(1)}, ${s}%, ${l}%)`);
+  });
+}
+function colorForOccurrence(occ) {
+  const sp  = norm(occ.species);
+  const sci = norm(occ.scientificname2);
+  if (speciesColorMap.has(sp))  return speciesColorMap.get(sp);
+  if (speciesColorMap.has(sci)) return speciesColorMap.get(sci);
+  return '#c0392b';
+}
+
+/* =====================================================================
+   DUCKDB
+   ===================================================================== */
+let db = null, conn = null, dataReady = false;
+let hasMediaColumn = false, mediaColumnName = null;
+
+async function initDuckDB() {
+  if (conn) return conn;
+  let lastErr = null;
+  for (const version of DUCKDB_VERSIONS) {
+    try {
+      setStatus(`Loading DuckDB ${version}…`);
+      const base = `https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@${version}/dist/`;
+      const duckdb = await import(base + 'duckdb-browser.mjs');
+      const bundle = await duckdb.selectBundle(duckdb.getJsDelivrBundles());
+      const workerUrl = URL.createObjectURL(
+        new Blob([`importScripts(${JSON.stringify(bundle.mainWorker)});`], { type: 'text/javascript' })
+      );
+      const worker = new Worker(workerUrl);
+      URL.revokeObjectURL(workerUrl);
+      db = new duckdb.AsyncDuckDB(new duckdb.ConsoleLogger(), worker);
+      await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+      conn = await db.connect();
+      return conn;
+    } catch (err) {
+      console.warn(`DuckDB ${version} failed:`, err);
+      lastErr = err;
+    }
+  }
+  throw new Error(`DuckDB-WASM could not be loaded (${lastErr?.message || 'unknown'})`);
+}
+
+async function query(sql, params = []) {
+  const stmt = await conn.prepare(sql);
+  try {
+    const res = await stmt.query(...params);
+    return res.toArray().map(normalizeRow);
+  } finally {
+    try { await stmt.close(); } catch (_) {}
+  }
+}
+
+async function ensureParquet() {
+  if (dataReady) return;
+  setStatus(`Fetching <code>${esc(PARQUET_URL)}</code>…`);
+  try {
+    const res = await fetch(PARQUET_URL);
+    if (!res.ok) throw new Error('HTTP ' + res.status);
+    const buf = new Uint8Array(await res.arrayBuffer());
+    await db.registerFileBuffer(TABLE, buf);
+    dataReady = true;
+    return;
+  } catch (err) {
+    await pickParquetFile(err);
+    dataReady = true;
+  }
+}
+
+function pickParquetFile(err) {
+  return new Promise(resolve => {
+    $('overlay-title').textContent = 'Select your Parquet file';
+    $('overlay-msg').innerHTML =
+      `Could not fetch <code>${esc(PARQUET_URL)}</code> automatically ` +
+      `(${esc(err && err.message ? err.message : 'unknown error')}).<br><br>` +
+      `This usually happens when the page is opened via <code>file://</code>. ` +
+      `Serve the folder over HTTP, or pick the Parquet file below. ` +
+      `Click <b>Skip</b> to explore the tree without data.`;
+    $('overlay').hidden = false;
+
+    const done = () => {
+      $('overlay').hidden = true;
+      $('parquet-file').onchange = null;
+      $('overlay-skip').onclick = null;
+      resolve();
+    };
+    $('parquet-file').onchange = async e => {
+      const f = e.target.files && e.target.files[0];
+      if (!f) return;
+      setStatus(`Reading <code>${esc(f.name)}</code>…`);
+      await db.registerFileBuffer(TABLE, new Uint8Array(await f.arrayBuffer()));
+      done();
+    };
+    $('overlay-skip').onclick = done;
+  });
+}
+
+/* Robust column detection — three fallbacks:
+   1. DESCRIBE SELECT * FROM
+   2. DESCRIBE FROM
+   3. Direct query on candidate names
+   Case is preserved in mediaColumnName so quoted identifiers match. */
+async function detectMediaColumn() {
+  hasMediaColumn = false;
+  mediaColumnName = null;
+
+  let cols = null;
+  for (const sql of [
+    `DESCRIBE SELECT * FROM '${TABLE}'`,
+    `DESCRIBE FROM '${TABLE}'`,
+  ]) {
+    try {
+      const r = await query(sql);
+      if (r && r.length) { cols = r; break; }
+    } catch (e) {
+      console.warn('DESCRIBE form failed:', sql, '→', e.message);
+    }
+  }
+
+  if (cols) {
+    for (const c of cols) {
+      const name = c.column_name ?? c.field ?? c.name ?? '';
+      if (String(name).toLowerCase() === 'mediatype') {
+        hasMediaColumn = true;
+        mediaColumnName = String(name);
+        console.log('Detected media column via DESCRIBE:', mediaColumnName);
+        return;
+      }
+    }
+    const names = cols.map(c => c.column_name ?? c.field ?? c.name).filter(Boolean);
+    console.warn('mediaType not found via DESCRIBE. Available columns:', names);
+  }
+
+  // Fallback: try known spellings directly
+  for (const candidate of ['mediaType', 'mediatype', 'MediaType', 'media_type', 'media']) {
+    try {
+      await query(`SELECT "${candidate}" FROM '${TABLE}' LIMIT 0`);
+      hasMediaColumn = true;
+      mediaColumnName = candidate;
+      console.log('Detected media column via direct query:', candidate);
+      return;
+    } catch (_) {}
+  }
+
+  console.warn('No media-type column could be detected in this Parquet file.');
+}
+
+let allNames = new Set();
+async function loadSpeciesSummary() {
+  const rows = await query(`
+    SELECT DISTINCT lower(trim(species)) AS n FROM '${TABLE}' WHERE species IS NOT NULL
+    UNION
+    SELECT DISTINCT lower(trim(scientificname2)) AS n FROM '${TABLE}' WHERE scientificname2 IS NOT NULL
+  `);
+  allNames = new Set(rows.map(r => String(r.n)).filter(Boolean));
+}
+
+function resolveTipKey(name) {
+  const full = norm(name);
+  if (!full) return null;
+  if (allNames.has(full)) return full;
+  const parts = full.split(' ');
+  if (parts.length > 2) {
+    const binom = parts.slice(0, 2).join(' ');
+    if (allNames.has(binom)) return binom;
+  }
+  return null;
+}
+
+/* =====================================================================
+   NEWICK
+   ===================================================================== */
+function parseNewick(str) {
+  let i = 0;
+  const n = str.length;
+  const skipWs = () => { while (i < n && /\s/.test(str[i])) i++; };
+
+  function parseName() {
+    skipWs();
+    let name = '';
+    if (str[i] === "'") {
+      i++;
+      while (i < n) {
+        if (str[i] === "'" && str[i + 1] === "'") { name += "'"; i += 2; }
+        else if (str[i] === "'") { i++; break; }
+        else name += str[i++];
+      }
+    } else {
+      const start = i;
+      while (i < n && !',():;'.includes(str[i])) i++;
+      name = str.slice(start, i).trim();
+    }
+    return name.replace(/_/g, ' ');
+  }
+
+  function parseNode() {
+    const node = { children: [], length: 0 };
+    skipWs();
+    if (str[i] === '(') {
+      i++;
+      while (i < n) {
+        node.children.push(parseNode());
+        skipWs();
+        if (str[i] === ',') { i++; continue; }
+        if (str[i] === ')') { i++; break; }
+        break;
+      }
+    }
+    const nm = parseName();
+    if (nm) node.name = nm;
+    skipWs();
+    if (str[i] === ':') {
+      i++;
+      const s = i;
+      while (i < n && !',();'.includes(str[i])) i++;
+      const v = parseFloat(str.slice(s, i));
+      node.length = Number.isFinite(v) ? v : 0;
+    }
+    return node;
+  }
+  return parseNode();
+}
+
+function ladderize(node, descending = true) {
+  if (!node.children.length) return 1;
+  const pairs = node.children.map(c => ({ c, n: ladderize(c, descending) }));
+  pairs.sort((a, b) => {
+    if (a.n !== b.n) return descending ? b.n - a.n : a.n - b.n;
+    return (a.c.name || '').toLowerCase().localeCompare((b.c.name || '').toLowerCase());
+  });
+  node.children = pairs.map(p => p.c);
+  return pairs.reduce((s, p) => s + p.n, 0);
+}
+
+/* =====================================================================
+   STATE
+   ===================================================================== */
+let treeRoot = null;
+let treeHasLengths = false;
+let lastLeaves = [];
+let selectedKeys = new Set();
+let currentQuery = '';
+let imageOnly = false;
+const imageCache = new Map();
+const isSelected = d => !!(d._key && selectedKeys.has(d._key));
+
+/* =====================================================================
+   TREE
+   ===================================================================== */
+async function loadNewickText() {
+  try {
+    const r = await fetch(NEWICK_URL);
+    if (r.ok) {
+      const txt = await r.text();
+      if (txt && txt.trim()) return { text: txt, source: 'file' };
+    }
+  } catch (_) {}
+  return { text: DEMO_NEWICK, source: 'demo' };
+}
+
+function tagLeaves() {
+  (function walk(n) {
+    if (!n.children.length) n._key = resolveTipKey(n.name);
+    else n.children.forEach(walk);
+  })(treeRoot);
+}
+
+function renderTree() {
+  if (!treeRoot) return;
+  const scroll = $('tree-scroll');
+  const W = Math.max(280, scroll.clientWidth || 400);
+  const marginLeft = 10, marginTop = 14, labelW = 195;
+  const plotW = Math.max(60, W - labelW - marginLeft - 16);
+
+  const counter = { leaf: 0 };
+  (function place(node, x, parent, depth) {
+    node.parent = parent; node.depth = depth; node.x = x;
+    if (!node.children.length) node.y = counter.leaf++;
+    else {
+      let sum = 0;
+      for (const c of node.children) {
+        place(c, x + (treeHasLengths ? (c.length || 0) : 1), node, depth + 1);
+        sum += c.y;
+      }
+      node.y = sum / node.children.length;
+    }
+  })(treeRoot, 0, null, 0);
+
+  const all = [];
+  (function collect(n) { all.push(n); n.children.forEach(collect); })(treeRoot);
+  const leaves = all.filter(n => !n.children.length);
+  const internals = all.filter(n => n.children.length);
+  lastLeaves = leaves;
+
+  const maxX = d3.max(all, n => n.x) || 1;
+  const yStep = 15;
+  const X = d3.scaleLinear().domain([0, maxX]).range([0, plotW]);
+  const Y = n => n.y * yStep + 10;
+  const H = Math.max(80, leaves.length * yStep + 28);
+
+  const svg = d3.select('#tree-svg').attr('width', W).attr('height', H);
+  svg.selectAll('*').remove();
+  const g = svg.append('g').attr('transform', `translate(${marginLeft},${marginTop})`);
+
+  const BRANCH = '#c2c8cf';
+
+  g.append('g').selectAll('line').data(all.filter(n => n.parent)).join('line')
+    .attr('x1', d => X(d.parent.x)).attr('x2', d => X(d.x))
+    .attr('y1', d => Y(d)).attr('y2', d => Y(d))
+    .attr('stroke', BRANCH).attr('stroke-width', 1);
+
+  g.append('g').selectAll('line').data(internals).join('line')
+    .attr('x1', d => X(d.x)).attr('x2', d => X(d.x))
+    .attr('y1', d => Y(d.children[0]))
+    .attr('y2', d => Y(d.children[d.children.length - 1]))
+    .attr('stroke', BRANCH).attr('stroke-width', 1);
+
+  g.append('g').selectAll('line').data(internals).join('line')
+    .attr('x1', d => X(d.x)).attr('x2', d => X(d.x))
+    .attr('y1', d => Y(d.children[0]))
+    .attr('y2', d => Y(d.children[d.children.length - 1]))
+    .attr('stroke', 'transparent').attr('stroke-width', 9)
+    .style('cursor', 'pointer')
+    .on('click', (event, d) => onNodeClick(d, event));
+
+  const tips = g.append('g').selectAll('g').data(leaves).join('g')
+    .style('cursor', d => d._key ? 'pointer' : 'default')
+    .on('click', (event, d) => {
+      if (d._key) onNodeClick(d, event);
+      else setStatus(`No occurrence data for <i>${esc(d.name)}</i>`);
+    });
+
+  tips.append('rect')
+    .attr('x', d => X(d.x) + 2).attr('y', d => Y(d) - 7.5)
+    .attr('width', labelW).attr('height', 15).attr('fill', 'transparent');
+
+  tips.append('text')
+    .attr('class', 'tip-label')
+    .attr('x', d => X(d.x) + 7).attr('y', d => Y(d))
+    .attr('dy', '0.33em')
+    .attr('fill', d => {
+      if (!d._key) return '#d0d5da';
+      if (!isSelected(d)) return '#8b949e';
+      return speciesColorMap.get(d._key) || '#1f2328';
+    })
+    .attr('font-weight', d => isSelected(d) ? 700 : 400)
+    .text(d => d.name || '');
+
+  applySearchHighlight();
+}
+
+/* =====================================================================
+   SELECTION
+   ===================================================================== */
+function descendantKeys(node) {
+  const keys = new Set();
+  (function walk(n) {
+    if (!n.children.length) { if (n._key) keys.add(n._key); }
+    else n.children.forEach(walk);
+  })(node);
+  return keys;
+}
+
+function onNodeClick(node, event) {
+  const keys = descendantKeys(node);
+  if (!keys.size) { setStatus('This lineage has no occurrence records.'); return; }
+  const allSelected = [...keys].every(k => selectedKeys.has(k));
+  if (allSelected) { for (const k of keys) selectedKeys.delete(k); }
+  else            { for (const k of keys) selectedKeys.add(k); }
+  renderTree();
+  refreshMap();
+}
+
+/* =====================================================================
+   MAP
+   ===================================================================== */
+const map = L.map('map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 2);
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 13, attribution: '&copy; OpenStreetMap contributors'
+}).addTo(map);
+const markers = L.layerGroup().addTo(map);
+
+/* Aggressive media-presence clause: catches NULL, empty strings,
+   whitespace-only, and the literal string "null". */
+function imageFilterSql() {
+  const col = mediaColumnName || 'mediaType';
+  const q = `"${col}"`;
+  return `AND ${q} IS NOT NULL
+          AND trim(CAST(${q} AS VARCHAR)) <> ''
+          AND lower(trim(CAST(${q} AS VARCHAR))) NOT IN ('null', 'none', 'na', 'n/a')`;
+}
+
+async function refreshMap() {
+  markers.clearLayers();
+  const keys = [...selectedKeys];
+  if (!keys.length) {
+    setStatus(conn ? `${allNames.size} names available · nothing selected` : 'Tree ready · data not loaded');
+    return;
+  }
+  if (!conn) { setStatus('Data not loaded — cannot show occurrences.'); return; }
+
+  const ph = keys.map(() => '?').join(',');
+  const baseWhere = `(lower(trim(species)) IN (${ph})
+                  OR lower(trim(coalesce(scientificname2, ''))) IN (${ph}))`;
+
+  const imageClause = imageOnly ? imageFilterSql() : '';
+
+  let rows;
+  let totalCount = null;
+  try {
+    rows = await query(
+      `SELECT * FROM '${TABLE}' WHERE ${baseWhere} ${imageClause}`,
+      [...keys, ...keys]
+    );
+
+    // When the filter is on, also grab the unfiltered count so we can
+    // tell the user exactly how many rows were hidden (or that none were).
+    if (imageOnly) {
+      const cnt = await query(
+        `SELECT count(*) AS n FROM '${TABLE}' WHERE ${baseWhere}`,
+        [...keys, ...keys]
+      );
+      totalCount = Number(cnt[0]?.n ?? 0);
+    }
+  } catch (err) {
+    // If the filter's column reference caused the error, disable it and retry.
+    if (imageOnly && /not found|binder|referenced column|does not exist/i.test(err.message)) {
+      console.warn('Image filter failed — disabling. Error:', err.message);
+      hasMediaColumn = false;
+      mediaColumnName = null;
+      imageOnly = false;
+      updateImageFilterAvailability();
+      $('btn-image-filter').classList.remove('active');
+      setStatus(`<span class="err">Image filter disabled — column not found in data.</span>`);
+      return refreshMap();
+    }
+    setStatus(`<span class="err">Query failed: ${esc(err.message)}</span>`);
+    return;
+  }
+
+  const pts = [];
+  let noCoords = 0;
+  for (const occ of rows) {
+    const lat = Number(occ.decimallatitude);
+    const lon = Number(occ.decimallongitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lon)) { noCoords++; continue; }
+    pts.push({ occ, lat, lon });
+  }
+
+  for (const { occ, lat, lon } of pts) {
+    const label = occ.scientificname2 || occ.species || '';
+    const colour = colorForOccurrence(occ);
+    const marker = L.circleMarker([lat, lon], {
+      radius: 5, weight: 1.5,
+      color: colour, fillColor: colour,
+      fillOpacity: 0.85, opacity: 0.9
+    });
+    marker.bindTooltip(esc(label), {
+      direction: 'top', offset: [0, -4], sticky: true, className: 'hover-tip'
+    });
+    marker.bindPopup(buildPopup(occ), { maxWidth: 300, minWidth: 260, autoPan: true });
+    marker.on('popupopen', () => {
+      const el = marker.getPopup() && marker.getPopup().getElement();
+      const slot = el && el.querySelector('.pop-img-slot');
+      if (slot) loadImageInto(slot, occ);
+    });
+    markers.addLayer(marker);
+  }
+
+  if (pts.length) {
+    const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
+    map.fitBounds(bounds, { padding: [40, 40], maxZoom: 8 });
+  }
+
+  /* ---- status line with clear filter feedback ---- */
+  const parts = [`<b>${pts.length}</b> occurrence${pts.length === 1 ? '' : 's'}`];
+  parts.push(keys.length === 1 ? '1 species' : `${keys.length} species`);
+
+  if (imageOnly) {
+    if (totalCount !== null && totalCount > rows.length) {
+      parts.push(`imaged only · <b>${totalCount - rows.length}</b> hidden`);
+    } else {
+      parts.push(`imaged only · <span class="note">no records hidden (all have mediaType)</span>`);
+    }
+  }
+  if (noCoords) parts.push(`${noCoords} without coordinates`);
+
+  setStatus(parts.join(' · '));
+}
+
+/* =====================================================================
+   POPUP
+   ===================================================================== */
+function buildPopup(occ) {
+  const sci = occ.scientificname2 || occ.species || 'Unknown';
+  const accepted = (occ.species && norm(occ.species) !== norm(sci)) ? occ.species : null;
+  const lat = Number(occ.decimallatitude).toFixed(4);
+  const lon = Number(occ.decimallongitude).toFixed(4);
+  const gbifId = occ.gbifid;
+  const gbifUrl = gbifId ? `https://www.gbif.org/occurrence/${gbifId}` : null;
+  const dot = colorForOccurrence(occ);
+
+  const rows = [];
+  rows.push(`<div class="pop-row"><span class="pop-key">Coordinates</span><span>${lat}, ${lon}</span></div>`);
+  if (occ.countrycode) rows.push(`<div class="pop-row"><span class="pop-key">Country</span><span>${esc(occ.countrycode)}</span></div>`);
+  if (occ.stateprovince) rows.push(`<div class="pop-row"><span class="pop-key">Region</span><span>${esc(occ.stateprovince)}</span></div>`);
+  if (occ.institutioncode) rows.push(`<div class="pop-row"><span class="pop-key">Institution</span><span>${esc(occ.institutioncode)}</span></div>`);
+  if (occ.catalognumber) rows.push(`<div class="pop-row"><span class="pop-key">Catalogue</span><span>${esc(occ.catalognumber)}</span></div>`);
+
+  return `
+    <div class="pop">
+      <div class="pop-title">
+        <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${dot};margin-right:6px;vertical-align:middle"></span>
+        ${esc(sci)}
+      </div>
+      ${accepted ? `<div class="pop-accepted">Accepted species: <i>${esc(accepted)}</i></div>` : ''}
+      <div class="pop-rows">${rows.join('')}</div>
+      <div class="pop-img-slot"></div>
+      ${gbifUrl ? `<a class="pop-link" href="${gbifUrl}" target="_blank" rel="noopener">View record on GBIF ↗</a>` : ''}
+    </div>`;
+}
+
+/* =====================================================================
+   IMAGE
+   ===================================================================== */
+async function resolveImageUrl(occ) {
+  const mt = occ.mediatype;
+  let candidate = null;
+  if (mt != null) {
+    const first = Array.isArray(mt) ? mt[0] : mt;
+    if (typeof first === 'string') candidate = first;
+    else if (first && typeof first === 'object') candidate = first.identifier || first.url || null;
+  }
+  if (typeof candidate === 'string' && /^https?:\/\//i.test(candidate)) return candidate;
+
+  const id = occ.gbifid;
+  if (!id) return null;
+  if (imageCache.has(id)) return imageCache.get(id);
+
+  try {
+    const res = await fetch(`https://api.gbif.org/v1/occurrence/${id}`);
+    if (res.ok) {
+      const json = await res.json();
+      const m = Array.isArray(json.media) && json.media[0] ? json.media[0] : null;
+      const url = m && m.identifier ? m.identifier : null;
+      imageCache.set(id, url);
+      return url;
+    }
+  } catch (_) {}
+  imageCache.set(id, null);
+  return null;
+}
+
+async function loadImageInto(slot, occ) {
+  slot.innerHTML = '<div class="pop-img-none">Loading image…</div>';
+  let url = null;
+  try { url = await resolveImageUrl(occ); } catch (_) {}
+  if (!url) { slot.innerHTML = '<div class="pop-img-none">No image available</div>'; return; }
+
+  const a = document.createElement('a');
+  a.href = url; a.target = '_blank'; a.rel = 'noopener';
+  a.title = 'Open the original image file';
+
+  const img = document.createElement('img');
+  img.src = url;
+  img.alt = occ.scientificname2 || 'Specimen image';
+  img.loading = 'lazy';
+  img.referrerPolicy = 'no-referrer';
+  img.onerror = () => { slot.innerHTML = '<div class="pop-img-none">Image could not be loaded</div>'; };
+
+  a.appendChild(img);
+  slot.replaceChildren(a);
+}
+
+/* =====================================================================
+   SEARCH
+   ===================================================================== */
+function applySearchHighlight() {
+  const q = currentQuery;
+  d3.selectAll('text.tip-label')
+    .style('text-decoration', d => (q.length > 1 && (d.name || '').toLowerCase().includes(q)) ? 'underline' : 'none');
+}
+function scrollToFirstMatch() {
+  const q = currentQuery;
+  if (q.length < 2) return;
+  const hit = lastLeaves.find(d => (d.name || '').toLowerCase().includes(q));
+  if (!hit) return;
+  const scroll = $('tree-scroll');
+  scroll.scrollTo({ top: Math.max(0, hit.y * 15 + 10 - scroll.clientHeight / 2), behavior: 'smooth' });
+}
+
+/* =====================================================================
+   UI
+   ===================================================================== */
+function wireUI() {
+  $('btn-clear').addEventListener('click', () => {
+    selectedKeys = new Set();
+    renderTree();
+    refreshMap();
+  });
+
+  $('btn-file').addEventListener('click', async () => {
+    if (!db) { setStatus('DuckDB not ready yet.'); return; }
+    dataReady = false;
+    try {
+      await pickParquetFile(new Error('manual selection'));
+      await detectMediaColumn();
+      await loadSpeciesSummary();
+      tagLeaves();
+      assignSpeciesColors();
+      selectedKeys = new Set();
+      renderTree();
+      updateImageFilterAvailability();
+      await refreshMap();
+    } catch (err) {
+      setStatus(`<span class="err">File load failed: ${esc(err.message)}</span>`);
+    }
+  });
+
+  $('btn-image-filter').addEventListener('click', () => {
+    if (!hasMediaColumn) {
+      setStatus('<span class="err">Image filter unavailable — no media column in this dataset.</span>');
+      return;
+    }
+    imageOnly = !imageOnly;
+    $('btn-image-filter').classList.toggle('active', imageOnly);
+    refreshMap();
+  });
+
+  $('search').addEventListener('input', e => {
+    currentQuery = e.target.value.trim().toLowerCase();
+    applySearchHighlight();
+  });
+  $('search').addEventListener('keydown', e => {
+    if (e.key === 'Enter') scrollToFirstMatch();
+  });
+
+  window.addEventListener('resize', debounce(renderTree, 150));
+}
+
+function updateImageFilterAvailability() {
+  const btn = $('btn-image-filter');
+  if (hasMediaColumn) {
+    btn.disabled = false;
+    btn.title = `Filter to records where "${mediaColumnName}" is populated`;
+  } else {
+    btn.disabled = true;
+    btn.title = 'No mediaType column found in this dataset (see browser console for available columns)';
+    btn.classList.remove('active');
+    imageOnly = false;
+  }
+}
+
+/* =====================================================================
+   BOOT
+   ===================================================================== */
+async function boot() {
+  setStatus('Loading tree…');
+  const { text: newickText, source } = await loadNewickText();
+
+  try {
+    treeRoot = parseNewick(newickText);
+  } catch (err) {
+    setStatus(`<span class="err">Tree parse error: ${esc(err.message)}</span>`);
+    return;
+  }
+
+  treeHasLengths = false;
+  (function scan(n) {
+    if (n.length > 0) treeHasLengths = true;
+    n.children.forEach(scan);
+  })(treeRoot);
+
+  let leafCount = 0;
+  (function count(n) { if (!n.children.length) leafCount++; else n.children.forEach(count); })(treeRoot);
+  if (!leafCount) {
+    setStatus('<span class="err">Tree has no leaves — check your Newick file.</span>');
+    return;
+  }
+
+  ladderize(treeRoot, LADDERIZE_DESCENDING);
+
+  tagLeaves();
+  assignSpeciesColors();
+  renderTree();
+
+  setStatus(`Tree loaded: <b>${leafCount}</b> tips` +
+    (source === 'demo' ? ' <span class="err">(demo — add tree.nwk)</span>' : '') + '. Loading data…');
+
+  wireUI();
+
+  try {
+    await initDuckDB();
+    setStatus('DuckDB ready. Loading Parquet…');
+
+    await ensureParquet();
+    if (!dataReady) {
+      setStatus('Tree ready. <span class="err">No data file loaded.</span>');
+      return;
+    }
+
+    await detectMediaColumn();
+    updateImageFilterAvailability();
+
+    setStatus('Reading species list…');
+    await loadSpeciesSummary();
+
+    tagLeaves();
+    assignSpeciesColors();
+    renderTree();
+
+    const matched = lastLeaves.filter(d => d._key).length;
+    setStatus(`Ready · <b>${allNames.size}</b> names in data · <b>${matched}/${leafCount}</b> tips matched · click tips to select`);
+    await refreshMap();
+  } catch (err) {
+    console.error('Data load failed:', err);
+    setStatus(`Tree is ready. <span class="err">Data failed: ${esc(err.message)}</span> — use <b>Load file…</b> to try again.`);
+  }
+}
+
+boot().catch(err => {
+  console.error(err);
+  setStatus(`<span class="err">Fatal: ${esc(err.message || err)}</span>`);
+});
+</script>
+</body>
 </html>
