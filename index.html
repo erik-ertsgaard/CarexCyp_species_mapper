@@ -641,14 +641,14 @@ function ensureLegend() {
   legendControl.onAdd = () => {
     const div = L.DomUtil.create('div', 'legend');
     div.innerHTML = `
-      <div class="legend-title">Marker key</div>
+      <div class="legend-title">Occurrence Types</div>
 
       <div class="legend-row">
         <svg width="16" height="16" viewBox="0 0 16 16">
           <polygon points="8,1 15,8 8,15 1,8"
                    fill="#888" stroke="#1f2328" stroke-width="1" stroke-linejoin="round"/>
         </svg>
-        <span>iNaturalist / observation</span>
+        <span>iNaturalist observation</span>
       </div>
 
       <div class="legend-row">
@@ -663,7 +663,7 @@ function ensureLegend() {
           <circle cx="8" cy="8" r="6.5" fill="none" stroke="white" stroke-width="3.5"/>
           <circle cx="8" cy="8" r="6.5" fill="none" stroke="#888" stroke-width="2.5"/>
         </svg>
-        <span>Herbarium, collected &lt; 1980 or undated</span>
+        <span>Herbarium, collected &lt; 1980</span>
       </div>
 
       <div class="legend-note">Colour = species</div>
