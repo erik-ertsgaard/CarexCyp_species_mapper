@@ -633,6 +633,47 @@ L.control.layers(
 
 const markers = L.layerGroup().addTo(map);
 
+/* ---- legend: created once, safe to call again ---- */
+let legendControl = null;
+function ensureLegend() {
+  if (legendControl) return;                       // already added — do nothing
+  legendControl = L.control({ position: 'bottomleft' });
+  legendControl.onAdd = () => {
+    const div = L.DomUtil.create('div', 'legend');
+    div.innerHTML = `
+      <div class="legend-title">Marker key</div>
+
+      <div class="legend-row">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <polygon points="8,1 15,8 8,15 1,8"
+                   fill="#888" stroke="#1f2328" stroke-width="1" stroke-linejoin="round"/>
+        </svg>
+        <span>iNaturalist / observation</span>
+      </div>
+
+      <div class="legend-row">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6.5" fill="#888" stroke="#1f2328" stroke-width="1"/>
+        </svg>
+        <span>Herbarium, collected &ge; 1980</span>
+      </div>
+
+      <div class="legend-row">
+        <svg width="16" height="16" viewBox="0 0 16 16">
+          <circle cx="8" cy="8" r="6.5" fill="none" stroke="white" stroke-width="3.5"/>
+          <circle cx="8" cy="8" r="6.5" fill="none" stroke="#888" stroke-width="2.5"/>
+        </svg>
+        <span>Herbarium, collected &lt; 1980 or undated</span>
+      </div>
+
+      <div class="legend-note">Colour = species</div>
+    `;
+    L.DomEvent.disableClickPropagation(div);
+    return div;
+  };
+  legendControl.addTo(map);
+}
+  
 /* Aggressive media-presence clause: catches NULL, empty strings,
    whitespace-only, and the literal string "null". */
 function imageFilterSql() {
@@ -690,30 +731,6 @@ async function refreshMap() {
     setStatus(`<span class="err">Query failed: ${esc(err.message)}</span>`);
     return;
   }
-
-const legend = L.control({ position: 'bottomleft' });
-legend.onAdd = () => {
-  const div = L.DomUtil.create('div', 'legend');
-  div.innerHTML = `
-    <div class="legend-title">Marker key</div>
-    <div class="legend-row">
-      <svg width="16" height="16" viewBox="0 0 16 16"><polygon points="8,1 15,8 8,15 1,8" fill="#888" stroke="#1f2328" stroke-width="1" stroke-linejoin="round"/></svg>
-      <span>iNaturalist / observation</span>
-    </div>
-    <div class="legend-row">
-      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="#888" stroke="#1f2328" stroke-width="1"/></svg>
-      <span>Herbarium, collected ≥ 1980</span>
-    </div>
-    <div class="legend-row">
-      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="white" stroke="#888" stroke-width="2"/></svg>
-      <span>Herbarium, collected &lt; 1980 or undated</span>
-    </div>
-    <div class="legend-note">Colour = species</div>
-  `;
-  L.DomEvent.disableClickPropagation(div);
-  return div;
-};
-legend.addTo(map);
   
   const pts = [];
   let noCoords = 0;
@@ -750,10 +767,10 @@ function markerSvg(occ) {
       <circle cx="8" cy="8" r="6.5"
               fill="${color}" stroke="#1f2328" stroke-width="1"/>
     </svg>`;
-  } else {
+    } else {
     return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
       <circle cx="8" cy="8" r="6.5"
-              fill="white" stroke="${color}" stroke-width="2"/>
+              fill="none" stroke="${color}" stroke-width="3"/>
     </svg>`;
   }
 }
@@ -804,8 +821,13 @@ for (const { occ, lat, lon } of pts) {
    POPUP
    ===================================================================== */
 function buildPopup(occ) {
-  const sci = occ.scientificname2 || occ.species || 'Unknown';
-  const accepted = (occ.species && norm(occ.species) !== norm(sci)) ? occ.species : null;
+  // Title = clean binomial; fall back to the authored form only if species is null
+  const sci = occ.species || occ.scientificname2 || 'Unknown';
+
+  // Show the authored name as a secondary line if it differs from the binomial
+  const authored = (occ.scientificname2 && norm(occ.scientificname2) !== norm(sci))
+    ? occ.scientificname2 : null;
+
   const lat = Number(occ.decimallatitude).toFixed(4);
   const lon = Number(occ.decimallongitude).toFixed(4);
   const gbifId = occ.gbifid;
@@ -843,13 +865,12 @@ function buildPopup(occ) {
         <span style="display:inline-block;width:10px;height:10px;border-radius:50%;background:${dot};margin-right:6px;vertical-align:middle"></span>
         ${esc(sci)}
       </div>
-      ${accepted ? `<div class="pop-accepted">Accepted species: <i>${esc(accepted)}</i></div>` : ''}
+      ${authored ? `<div class="pop-accepted">Recorded as: <i>${esc(authored)}</i></div>` : ''}
       <div class="pop-rows">${rows.join('')}</div>
       <div class="pop-img-slot"></div>
       ${gbifUrl ? `<a class="pop-link" href="${gbifUrl}" target="_blank" rel="noopener">View record on GBIF ↗</a>` : ''}
     </div>`;
 }
-  
 /* =====================================================================
    IMAGE
    ===================================================================== */
