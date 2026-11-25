@@ -4,7 +4,7 @@
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>Erigeron Species Mapper</title>
-<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌼</text></svg>">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🌾</text></svg>">
 
 <script type="importmap">
 {
@@ -126,7 +126,7 @@
   <aside id="tree-panel">
     <header id="tree-header">
       <div class="title-row">
-        <h1>🌼 Erigeron Species Mapper</h1>
+        <h1>🌾 Sedge Species Mapper</h1>
         <div class="header-actions">
           <button id="btn-file" class="btn" type="button">Load file…</button>
           <button id="btn-clear" class="btn" type="button">Clear</button>
@@ -165,8 +165,8 @@
 /* =====================================================================
    CONFIG
    ===================================================================== */
-const PARQUET_URL = './gbif_erigeron_acceptedNames.parquet';
-const NEWICK_URL  = './erigeron_ingroup_all_phylo_2026-10-07.tree';
+const PARQUET_URL = './gbif_cyperoideae.parquet';
+const NEWICK_URL  = './cyperoideae.tree.martinbravo2019.tree';
 const TABLE       = 'occ.parquet';
 const DUCKDB_VERSIONS = ['1.28.0', '1.27.0'];
 const LADDERIZE_DESCENDING = false;
