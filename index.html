@@ -103,7 +103,20 @@
     font-size:11.5px; font-style:italic; padding:3px 7px; border-radius:4px;
   }
   .hover-tip::before{display:none}
+.occ-marker{background:transparent; border:none}
+.occ-marker svg{display:block; overflow:visible}
 
+.legend{
+  background:var(--panel); padding:8px 10px; border-radius:6px;
+  border:1px solid var(--line);
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+  font-size:11.5px; line-height:1.5; color:var(--ink);
+  pointer-events:auto;
+}
+.legend-title{font-weight:600; margin-bottom:4px}
+.legend-row{display:flex; align-items:center; gap:6px}
+.legend-row svg{flex:none}
+.legend-note{color:var(--muted); font-style:italic; margin-top:4px; font-size:10.5px}
   .overlay{
     position:fixed; inset:0; background:rgba(20,24,28,.45);
     display:flex; align-items:center; justify-content:center; z-index:9999;
@@ -678,6 +691,30 @@ async function refreshMap() {
     return;
   }
 
+const legend = L.control({ position: 'bottomleft' });
+legend.onAdd = () => {
+  const div = L.DomUtil.create('div', 'legend');
+  div.innerHTML = `
+    <div class="legend-title">Marker key</div>
+    <div class="legend-row">
+      <svg width="16" height="16" viewBox="0 0 16 16"><polygon points="8,1 15,8 8,15 1,8" fill="#888" stroke="#1f2328" stroke-width="1" stroke-linejoin="round"/></svg>
+      <span>iNaturalist / observation</span>
+    </div>
+    <div class="legend-row">
+      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="#888" stroke="#1f2328" stroke-width="1"/></svg>
+      <span>Herbarium, collected ≥ 1980</span>
+    </div>
+    <div class="legend-row">
+      <svg width="16" height="16" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.5" fill="white" stroke="#888" stroke-width="2"/></svg>
+      <span>Herbarium, collected &lt; 1980 or undated</span>
+    </div>
+    <div class="legend-note">Colour = species</div>
+  `;
+  L.DomEvent.disableClickPropagation(div);
+  return div;
+};
+legend.addTo(map);
+  
   const pts = [];
   let noCoords = 0;
   for (const occ of rows) {
@@ -687,25 +724,60 @@ async function refreshMap() {
     pts.push({ occ, lat, lon });
   }
 
-  for (const { occ, lat, lon } of pts) {
-    const label = occ.scientificname2 || occ.species || '';
-    const colour = colorForOccurrence(occ);
-    const marker = L.circleMarker([lat, lon], {
-      radius: 5, weight: 1.5,
-      color: colour, fillColor: colour,
-      fillOpacity: 0.85, opacity: 0.9
-    });
-    marker.bindTooltip(esc(label), {
-      direction: 'top', offset: [0, -4], sticky: true, className: 'hover-tip'
-    });
-    marker.bindPopup(buildPopup(occ), { maxWidth: 300, minWidth: 260, autoPan: true });
-    marker.on('popupopen', () => {
-      const el = marker.getPopup() && marker.getPopup().getElement();
-      const slot = el && el.querySelector('.pop-img-slot');
-      if (slot) loadImageInto(slot, occ);
-    });
-    markers.addLayer(marker);
+/* Decide shape/fill from basisOfRecord + year. Returns inline SVG. */
+function markerSvg(occ) {
+  const color = colorForOccurrence(occ);
+  const bor   = String(occ.basisofrecord || '').toUpperCase();
+  const year  = Number(occ.year);
+
+  // Observation-type records (iNaturalist and similar) → diamond
+  const isObservation = bor === 'HUMAN_OBSERVATION' || bor === 'OBSERVATION';
+
+  if (isObservation) {
+    // filled diamond
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+      <polygon points="8,1 15,8 8,15 1,8"
+               fill="${color}" stroke="#1f2328" stroke-width="1" stroke-linejoin="round"/>
+    </svg>`;
   }
+
+  // Preserved / herbarium material: filled if collected 1980 or later,
+  // hollow otherwise (including records with no usable year)
+  const isModern = Number.isFinite(year) && year >= 1980;
+
+  if (isModern) {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6.5"
+              fill="${color}" stroke="#1f2328" stroke-width="1"/>
+    </svg>`;
+  } else {
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 16 16">
+      <circle cx="8" cy="8" r="6.5"
+              fill="white" stroke="${color}" stroke-width="2"/>
+    </svg>`;
+  }
+}
+  
+for (const { occ, lat, lon } of pts) {
+  const label = occ.scientificname2 || occ.species || '';
+  const icon = L.divIcon({
+    html: markerSvg(occ),
+    className: 'occ-marker',
+    iconSize: [16, 16],
+    iconAnchor: [8, 8]
+  });
+  const marker = L.marker([lat, lon], { icon, keyboard: false });
+  marker.bindTooltip(esc(label), {
+    direction: 'top', offset: [0, -10], sticky: true, className: 'hover-tip'
+  });
+  marker.bindPopup(buildPopup(occ), { maxWidth: 300, minWidth: 260, autoPan: true });
+  marker.on('popupopen', () => {
+    const el = marker.getPopup() && marker.getPopup().getElement();
+    const slot = el && el.querySelector('.pop-img-slot');
+    if (slot) loadImageInto(slot, occ);
+  });
+  markers.addLayer(marker);
+}
 
   if (pts.length) {
     const bounds = L.latLngBounds(pts.map(p => [p.lat, p.lon]));
@@ -740,8 +812,26 @@ function buildPopup(occ) {
   const gbifUrl = gbifId ? `https://www.gbif.org/occurrence/${gbifId}` : null;
   const dot = colorForOccurrence(occ);
 
+  const prettyBor = {
+    PRESERVED_SPECIMEN: 'Preserved specimen',
+    HUMAN_OBSERVATION:  'Human observation',
+    OBSERVATION:        'Observation',
+    MACHINE_OBSERVATION:'Machine observation',
+    MATERIAL_SAMPLE:    'Material sample',
+    FOSSIL_SPECIMEN:    'Fossil specimen',
+    LIVING_SPECIMEN:    'Living specimen',
+    OCCURRENCE:         'Occurrence'
+  };
+
   const rows = [];
   rows.push(`<div class="pop-row"><span class="pop-key">Coordinates</span><span>${lat}, ${lon}</span></div>`);
+  if (occ.basisofrecord) {
+    const label = prettyBor[String(occ.basisofrecord).toUpperCase()] || occ.basisofrecord;
+    rows.push(`<div class="pop-row"><span class="pop-key">Basis</span><span>${esc(label)}</span></div>`);
+  }
+  if (occ.year) {
+    rows.push(`<div class="pop-row"><span class="pop-key">Year</span><span>${esc(occ.year)}</span></div>`);
+  }
   if (occ.countrycode) rows.push(`<div class="pop-row"><span class="pop-key">Country</span><span>${esc(occ.countrycode)}</span></div>`);
   if (occ.stateprovince) rows.push(`<div class="pop-row"><span class="pop-key">Region</span><span>${esc(occ.stateprovince)}</span></div>`);
   if (occ.institutioncode) rows.push(`<div class="pop-row"><span class="pop-key">Institution</span><span>${esc(occ.institutioncode)}</span></div>`);
@@ -759,7 +849,7 @@ function buildPopup(occ) {
       ${gbifUrl ? `<a class="pop-link" href="${gbifUrl}" target="_blank" rel="noopener">View record on GBIF ↗</a>` : ''}
     </div>`;
 }
-
+  
 /* =====================================================================
    IMAGE
    ===================================================================== */
