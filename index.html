@@ -588,9 +588,36 @@ function onNodeClick(node, event) {
    MAP
    ===================================================================== */
 const map = L.map('map', { worldCopyJump: true, minZoom: 1 }).setView([20, 0], 2);
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  maxZoom: 13, attribution: '&copy; OpenStreetMap contributors'
+
+/* ---- basemaps ---- */
+const osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  maxZoom: 19,
+  attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
 }).addTo(map);
+
+const satelliteLayer = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {
+  maxNativeZoom: 18,
+  maxZoom: 19,
+  attribution:
+    'Imagery &copy; <a href="https://www.esri.com/">Esri</a>, Maxar, Earthstar Geographics, GIS User Community'
+});
+
+/* ---- optional place-name overlay (mostly useful on satellite) ---- */
+const labelsLayer = L.tileLayer(
+  'https://server.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', {
+  maxNativeZoom: 18,
+  maxZoom: 19,
+  zIndex: 2          // render above the imagery tile layer (which is zIndex 1)
+});
+
+/* ---- layer switcher (top-left by default; keep it away from your filter button) ---- */
+L.control.layers(
+  { 'OpenStreetMap': osmLayer, 'Satellite (Esri)': satelliteLayer },
+  { 'Place labels': labelsLayer },
+  { position: 'bottomright', collapsed: true }
+).addTo(map);
+
 const markers = L.layerGroup().addTo(map);
 
 /* Aggressive media-presence clause: catches NULL, empty strings,
